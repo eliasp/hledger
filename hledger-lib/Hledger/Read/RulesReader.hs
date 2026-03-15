@@ -592,8 +592,8 @@ dbgShowMatcher (FieldMatcher p f r) = unwords [dbgShowMatcherPrefix p, T.unpack 
 -- of rules which will be enabled only if one or more of the matchers
 -- succeeds.
 --
--- Three types of rule are allowed inside conditional blocks: field
--- assignments, skip, end. (A skip or end rule is stored as if it was
+-- Four types of rule are allowed inside conditional blocks: field assignments,
+-- skip, end, continue. (skip/end/continue rules are stored as if they were
 -- a field assignment, and executed in validateCsv. XXX)
 data ConditionalBlock = CB {
    cbMatchers    :: [Matcher]
@@ -843,8 +843,9 @@ journalfieldnames =
   ,"date"
   ,"description"
   ,"status"
-  ,"skip" -- skip and end are not really fields, but we list it here to allow conditional rules that skip records
+  ,"skip" -- skip, end and continue are not really fields, but we list them here to allow conditional rules that skip records or further rules
   ,"end"
+  ,"continue"
   ]
 
 assignmentseparatorp :: CsvRulesParser ()
@@ -1323,16 +1324,12 @@ parseCassava separator path content =
 applyConditionalSkips :: CsvRules -> [CsvRecord] -> [CsvRecord]
 applyConditionalSkips _ [] = []
 applyConditionalSkips rules (r:rest) =
-  case skipnum r of
-    Nothing -> r : applyConditionalSkips rules rest
-    Just cnt -> applyConditionalSkips rules $ drop (cnt-1) rest
-  where
-    skipnum r1 =
-      case (hledgerField rules r1 "end", hledgerField rules r1 "skip") of
-        (Nothing, Nothing) -> Nothing
-        (Just _, _) -> Just maxBound
-        (Nothing, Just "") -> Just 1
-        (Nothing, Just x) -> Just (read $ T.unpack x)
+  case (hledgerField rules r "end", hledgerField rules r "skip", hledgerField rules r "continue") of
+    (_, _, Just _) -> r : applyConditionalSkips rules rest  -- "continue": process this record and stop applying further rules to it
+    (Nothing, Nothing, Nothing) -> r : applyConditionalSkips rules rest
+    (Just _, _, _) -> []  -- "end": stop processing the CSV file
+    (Nothing, Just "", _) -> applyConditionalSkips rules rest  -- "skip": skip the current record
+    (Nothing, Just x, _) -> applyConditionalSkips rules $ drop (read $ T.unpack x) rest  -- skip N records
 
 -- | Do some validation on the parsed CSV records:
 -- check that they all have at least two fields.
